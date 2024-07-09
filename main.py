@@ -176,6 +176,19 @@ class platform_mesh():
         self.edge_width = edge_width
         self.normal = normalize(normal)
         self.control = normalize(control)
+    
+    def rotate_roll(self,a):
+        normal = cross(self.normal,self.control)
+        newdirection = self.normal * np.cos(a) + normal * np.sin(a)
+        self.normal = normalize(newdirection)
+
+
+    def rotate_pitch(self,a):
+        normal = cross(self.normal,self.control)
+        newdirection = self.normal * np.cos(a) + self.control * np.sin(a)
+        self.normal = normalize(newdirection)
+        self.control = cross(normal,self.normal)
+
 
     def getmesh(self):
         a = np.pi / 10
@@ -189,6 +202,10 @@ class platform_mesh():
             w = cross(self.control, self.normal)
             polygons.append(polygon([(0,0,0), tuple(self.radius*(w*np.cos(angle) + self.control * np.sin(angle))),tuple(self.radius*(w*np.cos(angle + a) + self.control * np.sin(angle + a)))],color))
         polygons.append(polygon([(0,0,0),(0,0,0), tuple(100 * self.normal)],(0,255,0)))
+        polygons.append(polygon([(0,0,0),(0,0,0),tuple(100*self.control)], (0,0,255)))
+        polygons.append(polygon([(0,0,0),(0,0,0),tuple(50 *i)],(255,255,0)))
+        polygons.append(polygon([(0,0,0),(0,0,0),tuple(50 *j)],(255,255,0)))
+        polygons.append(polygon([(0,0,0),(0,0,0),tuple(50 *k)],(255,255,0)))
         return polygons
 
 
@@ -215,6 +232,10 @@ for x in meshes:
 
 
 while True:
+    world.clear()
+    meshes = platform.getmesh()
+    for x in meshes:
+        world.add(x)
     user.renderworld(world)
     for event in pygame.event.get():
          if event.type == QUIT:
@@ -231,6 +252,14 @@ while True:
         user.step_forward(-10)
     if keys[K_d]:
         user.step_sideways(10)
+    if keys[K_j]:
+        platform.rotate_roll(0.05)
+    if keys[K_l]:
+        platform.rotate_roll(-0.05)
+    if keys[K_i]:
+        platform.rotate_pitch(0.05)
+    if keys[K_k]:
+        platform.rotate_pitch(-0.05)
     if keys[K_COMMA]:
         user.zoom_in()
     if keys[K_PERIOD]:
@@ -252,6 +281,7 @@ while True:
             sys.exit()
     draw_text(screen,"zoom : " + str(round(length(user.direction))), (255,0,0), (1350,50),23)
     draw_text(screen, str((np.round(user.position,decimals = 1))),(255,0,0), (1350,100),23)
+
     pygame.display.update()
     
     clock.tick(60)
