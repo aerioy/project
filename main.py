@@ -450,6 +450,7 @@ while True:
         points.pop(0)
     printstate(state)
     printpath(points)
+    pygame.draw.line(screen,(255,128,0),transform(tuple(user.renderpoint(ball_position))),transform(tuple(user.renderpoint(ball_position + ball_velocity))))
 
     for event in pygame.event.get():
          if event.type == QUIT:
@@ -487,13 +488,13 @@ while True:
     if keys[K_PERIOD]:
         user.zoom_out()
     if keys[K_UP]:
-        user.rotate_vertical(-0.02)
+        user.rotate_vertical(-0.04)
     if keys[K_DOWN]:
-        user.rotate_vertical(0.02)
+        user.rotate_vertical(0.04)
     if keys[K_LEFT]:
-        user.rotate_horizontal(0.02)
+        user.rotate_horizontal(0.04)
     if keys[K_RIGHT]:
-        user.rotate_horizontal(-0.02)
+        user.rotate_horizontal(-0.04)
     if keys[K_SPACE]:
         user.fly(10)
     if keys[K_LSHIFT]:
