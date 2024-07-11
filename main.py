@@ -17,7 +17,8 @@ clock = pygame.time.Clock()
 i = np.array([1,0,0])
 j = np.array([0,1,0])
 k = np.array([0,0,1])
-
+gravity = np.array([0,0,-9.8])
+dt = 0.03
 def draw_text(surface, text, color, position,size):
     if not pygame.font.get_init():
         pygame.font.init()
@@ -69,6 +70,32 @@ def project_to_screen(n,w,v,p):
     xout = np.dot(project(vector,w),w) 
     yout = np.dot(project(vector,q),q)
     return np.array([xout,yout])
+
+def rotate(vector, axis, angle):
+    axis = normalize(axis)  
+    if abs(np.dot(normalize(vector), axis) - 1) < 1e-6:
+        return vector
+    projection = project(vector, axis)
+    normal = vector - projection
+    mag = length(normal)
+    if mag > 1e-6:  
+        normal_unit = normal / mag
+        cross_unit = cross(axis, normal_unit)  
+        rotated_normal = mag * (normal_unit * np.cos(angle) + cross_unit * np.sin(angle))
+        return projection + rotated_normal
+    else:
+        return vector
+
+def cos(x):
+    return np.cos(x)
+
+
+def sin(x):
+    return np.sin(x)
+
+
+def spherepoint(a,b,r,x,y,z):
+    return (x + r * cos(b) * cos(a), y + r * cos(b) * sin(a), r * sin(b))
 
 
 class polygon:
@@ -170,80 +197,246 @@ class viewer:
         self.position = self.position + d * np.array([0,0,1])
 
 
-class platform_mesh():
-    def __init__ (self,radius = 100,edge_width = 20,normal = (0,0,1),control = (1,0,0)):
+class circle():
+    def __init__ (self,radius = 100,normal = (0,0,1),control = (1,0,0), position = (0,0,0),show_normal = True):
         self.radius = radius
-        self.edge_width = edge_width
         self.normal = normalize(normal)
         self.control = normalize(control)
+        self.position = np.array(position)
     
     def rotate_roll(self,a):
-        normal = cross(self.normal,self.control)
-        newdirection = self.normal * np.cos(a) + normal * np.sin(a)
-        self.normal = normalize(newdirection)
+        self.normal = rotate(self.normal,self.control,a)
 
 
     def rotate_pitch(self,a):
-        normal = cross(self.normal,self.control)
-        newdirection = self.normal * np.cos(a) + self.control * np.sin(a)
-        self.normal = normalize(newdirection)
-        self.control = cross(normal,self.normal)
+        axis = cross(self.normal,self.control)
+        self.normal = rotate(self.normal,axis,a)
+        self.control = rotate(self.control,axis,a)
 
 
-    def getmesh(self):
-        a = np.pi / 10
+    def getmesh(self, n = 7):
+        a = np.pi / n
         polygons = []
-        for x in range(-10,10):
+        pos = self.position
+        for x in range(-n,n):
             angle = x * a  
             if x % 2 == 1:
-                color = (50,50,50)
+                color = (100, 100, 100)
             else:
-                color = (100,100,100)
+                color = (80,80,80)
             w = cross(self.control, self.normal)
-            polygons.append(polygon([(0,0,0), tuple(self.radius*(w*np.cos(angle) + self.control * np.sin(angle))),tuple(self.radius*(w*np.cos(angle + a) + self.control * np.sin(angle + a)))],color))
-        polygons.append(polygon([(0,0,0),(0,0,0), tuple(100 * self.normal)],(0,255,0)))
-        polygons.append(polygon([(0,0,0),(0,0,0),tuple(100*self.control)], (0,0,255)))
-        polygons.append(polygon([(0,0,0),(0,0,0),tuple(50 *i)],(255,255,0)))
-        polygons.append(polygon([(0,0,0),(0,0,0),tuple(50 *j)],(255,255,0)))
-        polygons.append(polygon([(0,0,0),(0,0,0),tuple(50 *k)],(255,255,0)))
+            polygons.append(polygon([pos, tuple(self.radius*(w*np.cos(angle) + self.control * np.sin(angle))),tuple(self.radius*(w*np.cos(angle + a) + self.control * np.sin(angle + a)))],color))
+        polygons.append(polygon([pos,pos, tuple(100 * self.normal)],(0,255,0)))
+        polygons.append(polygon([pos,pos,tuple(100*self.control)], (0,0,255)))
         return polygons
 
 
+class sphere:
+    def __init__ (self,radius = 1,center = (0,0,0), color = (255,255,255)):
+        self.radius = radius
+        self.center = np.array(center)
+        self.color = color
+
+    def setposition (self,p):
+        self.center = np.array(p)
+    
+    def setradius (self,r):
+        self.radius = r
+    
+    def getmesh(self, view_point, n = 10):
+        polygons = []
+        view = normalize(view_point - self.center)
+        pos = self.center
+        a = np.pi/n
+        temp = view + i
+        temp2 = project(temp,view)
+        normalx = normalize(temp - temp2)
+        normaly = cross(view,normalx)
+        for x in range(-n,n):
+            angle = x * a
+            polygons.append(polygon([pos, tuple( pos + self.radius*(normaly*np.cos(angle) + normalx* np.sin(angle))),tuple(pos + self.radius*(normaly*np.cos(angle + a) + normalx* np.sin(angle + a)))],self.color))
+        return polygons
+
+
+"""
+state:
+0 -> normalx
+1 -> normaly
+2 -> normalz
+3 -> controlx
+4 -> controly
+5 -> controlz
+6 -> ballx
+7 -> bally
+8 -> ballz
+9 -> ballvelocityx
+10 -> ballvelocityy
+11 -> ballvelocityz
+12 -> is_terminal
+
+action:
+0 -> pitch+
+1 -> pitch-
+2 -> roll+
+3 -> roll-
+4 -> none
+"""
+        
+
+    
+def transition (state,action):
+    normal = np.array([state[0],state[1],state[2]])
+    control = np.array([state[3],state[4],state[5]])
+    ball_position = np.array([state[6],state[7],state[8]])
+    ball_velocity = np.array([state[9],state[10],state[11]])
+    angle = 0
+    newnormal = normal
+    newcontrol = control
+    newposition = ball_position
+    newvelocity = ball_velocity
+    is_terminal = False
+    if action == 0:
+        axis = control
+        angle = 0.05
+    if action == 1:
+        axis = control
+        angle = -0.05
+    if action == 2:
+        axis = cross(normal,control)
+        angle = 0.05
+    if action == 3:
+        axis = cross(normal,control)
+        angle = -0.05
+    if angle != 0:
+        newnormal = rotate(normal,axis,angle)
+        newcontrol = rotate(control,axis,angle)
+        newposition = rotate(ball_position,axis,angle)
+        nevelocity = rotate(ball_velocity,axis,angle)
+    projectedgravity = gravity - project(gravity,newnormal)
+    newposition = newposition + newvelocity * dt 
+    newvelocity = newvelocity + projectedgravity * dt
+    newposition = newposition - project(newposition - np.array([0,0,0]), newnormal)
+    newvelocity = newvelocity - project(newvelocity, newnormal)
+    if length(newposition - np.array([0,0,0])) > 100:
+        is_terminal = True
+    out = [
+    newnormal[0],
+    newnormal[1],
+    newnormal[2],
+    newcontrol[0],
+    newcontrol[1],
+    newcontrol[2],
+    newposition[0],
+    newposition[1],
+    newposition[2],
+    newvelocity[0],
+    newvelocity[1],
+    newvelocity[2],
+    is_terminal
+    ]
+    return np.array(out)
 
 
 
+
+
+
+     
+
+
+    
+
+
+
+
+
+        
+
+  
 
 user = viewer(initial_position = (-20,0,100))
 world = environment()
-platform = platform_mesh()
+platform = circle()
+ball = sphere(7)
 
+
+
+def printstate(state):
+    world.clear()
+    normal = np.array([state[0],state[1],state[2]])
+    control = np.array([state[3],state[4],state[5]])
+    ball_position = np.array([state[6],state[7],state[8]])
+    ball_velocity = np.array([state[9],state[10],state[11]])
+    platform.normal = normal
+    platform.control = control
+    ball.center = ball_position + ball.radius/2 * normal
+    meshes = platform.getmesh()
+    for x in meshes:
+        world.add(x)
+    polygons = []
+    polygons.append(polygon([(0,0,0),(0,0,0),tuple(50 *i)],(255,255,0)))
+    polygons.append(polygon([(0,0,0),(0,0,0),tuple(50 *j)],(255,255,0)))
+    polygons.append(polygon([(0,0,0),(0,0,0),tuple(50 *k)],(255,255,0)))
+    for x in polygons:
+     world.add(x)
+    for x in ball.getmesh(user.position):
+        world.add(x)
+
+    user.renderworld(world)
+
+
+    
 meshes = platform.getmesh()
 
 for x in meshes:
+    world.add(x)
+
+polygons = []
+
+polygons.append(polygon([(0,0,0),(0,0,0),tuple(50 *i)],(255,255,0)))
+polygons.append(polygon([(0,0,0),(0,0,0),tuple(50 *j)],(255,255,0)))
+polygons.append(polygon([(0,0,0),(0,0,0),tuple(50 *k)],(255,255,0)))
+
+for x in polygons:
     world.add(x)
 
 
 
 
 
+state_ = [
+    platform.normal[0],
+    platform.normal[1],
+    platform.normal[2],
+    platform.control[0],
+    platform.control[1],
+    platform.control[2],
+    ball.center[0],
+    ball.center[1],
+    ball.center[2],
+    0,
+    0,
+    0
+]
 
-
-
-
-
+state = np.array(state_)
 while True:
-    world.clear()
-    meshes = platform.getmesh()
-    for x in meshes:
-        world.add(x)
-    user.renderworld(world)
+    printstate(state)
     for event in pygame.event.get():
          if event.type == QUIT:
             pygame.quit()
             sys.exit()
-        
+         elif event.type == pygame.MOUSEMOTION:
+            # Get relative mouse movement
+            dx, dy = event.rel
+            # Apply rotation with a smaller factor to reduce sensitivity
+            rotation_factor = 0.005 # Adjust this value to change rotation speed
+            user.rotate_horizontal(-dx * rotation_factor)
+            user.rotate_vertical(dy * rotation_factor)
+
     keys = pygame.key.get_pressed()
-      
+    
+    action = 5
     if keys[K_w]:
         user.step_forward(10)
     if keys[K_a]:
@@ -253,13 +446,13 @@ while True:
     if keys[K_d]:
         user.step_sideways(10)
     if keys[K_j]:
-        platform.rotate_roll(0.05)
+        action = 0
     if keys[K_l]:
-        platform.rotate_roll(-0.05)
+        action = 1
     if keys[K_i]:
-        platform.rotate_pitch(0.05)
+        action = 2
     if keys[K_k]:
-        platform.rotate_pitch(-0.05)
+        action = 3
     if keys[K_COMMA]:
         user.zoom_in()
     if keys[K_PERIOD]:
@@ -276,9 +469,8 @@ while True:
         user.fly(10)
     if keys[K_LSHIFT]:
         user.fly(-10)
-        if event.type == QUIT:
-            pygame.quit()
-            sys.exit()
+    state = transition(state,action)
+    
     draw_text(screen,"zoom : " + str(round(length(user.direction))), (255,0,0), (1350,50),23)
     draw_text(screen, str((np.round(user.position,decimals = 1))),(255,0,0), (1350,100),23)
 
