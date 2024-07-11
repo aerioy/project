@@ -232,7 +232,7 @@ class circle():
 
 
 class sphere:
-    def __init__ (self,radius = 1,center = (0,0,0), color = (255,255,255)):
+    def __init__ (self,radius = 1,center = (0,0,0), color = (149, 172, 196)):
         self.radius = radius
         self.center = np.array(center)
         self.color = color
@@ -360,7 +360,6 @@ platform = circle()
 ball = sphere(7)
 
 
-
 def printstate(state):
     world.clear()
     normal = np.array([state[0],state[1],state[2]])
@@ -419,9 +418,39 @@ state_ = [
     0
 ]
 
+def printpath(path):
+    points = []
+    axis1 = normalize(cross(platform.normal,platform.control))
+    axis2 = normalize(platform.control)
+    for p in path:
+        vector = p[0] * axis1 + p[1] * axis2
+        points.append(vector)
+    for x in range(len(points) - 1):
+        start = user.renderpoint(points[x])
+        end = user.renderpoint(points[x+1])
+        if not (np.all(start == 0) or np.all(end == 0)):
+            start_transformed = transform(tuple(start))
+            end_transformed = transform(tuple(end))
+            pygame.draw.line(screen, (255, 255, 255), start_transformed, end_transformed)
+
+
+points = []
 state = np.array(state_)
 while True:
+    normal = np.array([state[0],state[1],state[2]])
+    control = np.array([state[3],state[4],state[5]])
+    ball_position = np.array([state[6],state[7],state[8]])
+    ball_velocity = np.array([state[9],state[10],state[11]])
+    axis1 = normalize(cross(normal,control))
+    axis2 = normalize(control)
+    xtemp = np.dot(ball_position,axis1)
+    ytemp = np.dot(ball_position,axis2)
+    points.append(np.array([xtemp,ytemp]))
+    if len(points) > 100:
+        points.pop(0)
     printstate(state)
+    printpath(points)
+
     for event in pygame.event.get():
          if event.type == QUIT:
             pygame.quit()
