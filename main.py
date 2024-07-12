@@ -118,8 +118,8 @@ class memory:
 
 class agent:
     def __init__ (self):
-        self.policynet = network([13,128,128,5],0.0005,is_distribution = True)
-        self.valuenet = network([13,128,128,1],0.0005,)
+        self.policynet = network([13,256,256,5],0.0001,is_distribution = True)
+        self.valuenet = network([13,256,256,1],0.0001,)
         self.policynet.apply(init_weights)
         self.memory = memory()
         self.record = float("-inf")
@@ -150,7 +150,7 @@ class agent:
                torch.squeeze(distribution.log_prob(action)).item(),\
                torch.squeeze(value).item()
 
-    def train(self,iterations,epsilon = 0.22,discount = 0.99):
+    def train(self,iterations,epsilon = 0.1,discount = 0.99):
         data = self.memory.generatetrajectories()
         states_ = [x[0] for x in data]
         actions_ = [x[1] for x in data]
@@ -501,11 +501,21 @@ def reward(state):
     temp = -1 * normalize(ball_velocity)
     offset = normalize(ball_position - origin)
     reward = 0
+    
     similarity = np.dot(temp,offset)
     if similarity >= 0:
-        reward += np.dot(temp,offset)
-    if r < 99:
-        reward += 0.1
+        reward += 5 * np.dot(temp,offset)
+    
+    
+    distance_reward = max(0, 1 - r/100)  
+    reward += 2 * distance_reward
+    
+  
+    reward += 0.1  
+    
+    if r >= 100:
+        reward -= 10
+    
     return reward
     
 
@@ -538,7 +548,7 @@ def transition (state,action):
         newcontrol = rotate(control,axis,angle)
         newposition = rotate(ball_position,axis,angle)
         newvelocity = rotate(ball_velocity,axis,angle)
-    if np.dot(newnormal,k) <= 0.7:
+    if np.dot(newnormal,k) <= 0.9:
         newnormal = normal
         newcontrol = control
         newposition = ball_position
@@ -640,7 +650,7 @@ def printpath(path):
 
 
 def testrun (policy):
-    state = np.array([0,0,1,1,0,0,0,0,0,randrange(-10,10),randrange(-10,10),randrange(-10,10),False])
+    state = np.array([0,0,1,1,0,0,0,0,0, randrange(-10,10),randrange(-10,10),randrange(-10,10),False])
     points = []
     totalrewards = 0
     loop = True
@@ -723,8 +733,8 @@ while True:
         testrun(policy)
     n += 1
     done = False
-    for _ in range (7):
-        state = np.array([0,0,1,1,0,0,0,0,0,randrange(-10,10),randrange(-10,10),randrange(-10,10),False])
+    for _ in range (20):
+        state = np.array([0,0,1,1,0,0,0,0,0,2* randrange(-10,10),2 * randrange(-10,10),2 * randrange(-10,10),False])
         while not done:
             action,prob,val = policy.getaction(state)
             nextstate = transition(state,action)
@@ -734,4 +744,4 @@ while True:
             policy.storememory(state,action,prob,val,reward_,)
             state = nextstate
         policy.endtrajectory()
-    policy.train(10)
+    policy.train(20)
