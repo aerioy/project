@@ -10,15 +10,226 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.distributions.categorical import Categorical
 
-
 pygame.init()
 clock = pygame.time.Clock()
+
+torch.set_default_dtype(torch.float64)
 
 i = np.array([1,0,0])
 j = np.array([0,1,0])
 k = np.array([0,0,1])
+origin = np.array([0,0,0])
 gravity = np.array([0,0,-9.8])
 dt = 0.03
+
+def g(x, y):
+    return torch.where(y >= 0, (1+x) * y, (1-x) * y)
+
+def init_weights(m):
+    if type(m) == nn.Linear:
+        torch.nn.init.xavier_uniform_(m.weight, gain=0.01)
+        m.bias.data.fill_(0.01)
+
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(device)
+
+
+def flatten2d(arr):
+    out = []
+    for x in arr:
+        for y in x:
+            out.append(y)
+    return out
+
+class network(nn.Module):
+    def __init__(self,layers,lrate,is_distribution = False):
+      super(network, self).__init__()
+      self.distribution = is_distribution
+      self.network = self.constructnet(layers)
+      self.optimizer = optim.Adam(self.parameters(),lr = lrate)
+
+    
+    def constructnet (self,layers):
+      arcitecture = []
+      for x in range(len(layers) - 1):
+        arcitecture.append(nn.Linear(layers[x],layers[x+1]))
+        if x != len(layers) - 2:
+         arcitecture.append(nn.ReLU())
+      if self.distribution:
+        arcitecture.append(nn.Softmax(dim = -1))
+      return nn.Sequential(*arcitecture)
+
+    def forward (self,x):
+        if self.distribution:
+            distribution = self.network(x)
+            distribution = Categorical(distribution)
+            return distribution
+        return self.network(x)
+     
+    def saveparameters (self,filepath):
+        torch.save(self.state_dict(),filepath)
+    
+    def loadparameters (self,filepath):
+        self.load_state_dict(torch.load(filepath))
+
+
+class memory:
+    def __init__ (self):
+        self.length = 0
+        self.states = []
+        self.actions = []
+        self.probabilities = []
+        self.values = []
+        self.rewards = []
+        self.trajectories = []
+    
+    def generatetrajectories(self):
+        return self.trajectories
+        
+    def store (self,state,action,probability,value,reward):
+        self.length += 1
+        self.states.append(state)
+        self.actions.append(action)
+        self.probabilities.append(probability)
+        self.values.append(value)
+        self.rewards.append(reward)
+    
+    def storetrajectory(self):
+        self.trajectories.append([
+             np.array(self.states),
+             np.array(self.actions),
+             np.array(self.probabilities),
+             np.array(self.values),
+             np.array(self.rewards)
+             ])
+        self.clear()
+    
+    def clear(self,clear_trajectories = False):
+        self.length = 0
+        self.states = []
+        self.actions = []
+        self.probabilities = []
+        self.values = []
+        self.rewards = []
+        if clear_trajectories:
+            self.trajectories = []
+
+
+class agent:
+    def __init__ (self):
+        self.policynet = network([13,128,128,5],0.0005,is_distribution = True)
+        self.valuenet = network([13,128,128,1],0.0005,)
+        self.policynet.apply(init_weights)
+        self.memory = memory()
+        self.record = float("-inf")
+
+    def storememory(self,state,action,probability,value,reward):
+        self.memory.store(state,action,probability,value,reward)
+    
+    def endtrajectory(self):
+        self.memory.storetrajectory()
+
+    def saveparameters (self,policyfile,valuefile):
+        self.policynet.saveparameters(policyfile)
+        self.valuenet.saveparameters(valuefile)
+    
+    def loadparameters(self,policyfile,valuefile):
+        self.policynet.loadparameters(policyfile)
+        self.valuenet.loadparameters(valuefile)
+
+    def getaction(self,inputstate,show_probs = False):
+        state = torch.tensor(np.array([inputstate]),dtype =torch.float64)
+        distribution = self.policynet(state)
+        if(show_probs):
+            return distribution.probs
+        value = self.valuenet(state)
+        action = distribution.sample()
+
+        return torch.squeeze(action).item(),\
+               torch.squeeze(distribution.log_prob(action)).item(),\
+               torch.squeeze(value).item()
+
+    def train(self,iterations,epsilon = 0.22,discount = 0.99):
+        data = self.memory.generatetrajectories()
+        states_ = [x[0] for x in data]
+        actions_ = [x[1] for x in data]
+        probs_ = [x[2] for x in data]
+        values_  = [x[3] for x in data]
+        rewards__ = [x[4] for x in data]
+        totalrewards = np.sum(flatten2d(rewards__))
+        if totalrewards > self.record:
+            self.record = totalrewards
+            print("record rewards acheived")
+            self.saveparameters("recordpolicy.pth","recordvalue.pth")
+        futurerewards = []
+        advantages = []
+        
+
+        for i in range(len(rewards__)):
+
+            rewards_ = rewards__[i]
+            vals_ = values_[i]
+            
+            # calculate reward esitmates
+            rewards_to_go_ = np.zeros(len(rewards_))  
+
+            for T in range (len(rewards_to_go_)):
+                discount_ = 1
+                R = 0
+                for t in range (T,len(rewards_to_go_)):
+                    R += discount_ * rewards_[t]
+                    discount_ = discount_ * discount
+                rewards_to_go_[T] = R
+
+            futurerewards.append(rewards_to_go_)
+
+            # calculate advantage estimates
+            advantages_ = np.zeros(len(rewards_))
+
+            for T in range (len(advantages_) - 1):
+                discount_ = 1
+                A = 0
+                for t in range(T,len(advantages_ ) - 1):
+                    A+= discount_ * (rewards_[t] + discount * vals_[t+1] - vals_[t])
+                    discount_ = discount_ * discount
+                advantages_[T] = A
+                
+            advantages.append(advantages_)
+            
+
+        
+        states = torch.tensor(flatten2d(states_))
+        oldprobs = torch.tensor(flatten2d(probs_))
+        actions = torch.tensor(flatten2d(actions_))
+        rewards_to_go = torch.tensor(flatten2d(futurerewards))
+        advantages = torch.tensor(flatten2d(advantages))
+
+
+        # training on policy
+        
+        for _ in range (iterations):
+            self.policynet.optimizer.zero_grad()
+            distribution = self.policynet(states) 
+            newprobs = distribution.log_prob(actions)
+            ratio = (newprobs - oldprobs).exp()
+            PPOLoss = -1 * torch.min(advantages * ratio, g(epsilon,advantages)).mean()
+            PPOLoss.backward()
+            self.policynet.optimizer.step()
+
+        # trainig on value estimator
+        for _ in range (iterations):
+            self.valuenet.optimizer.zero_grad()
+            networkvalues = self.valuenet(states)
+            valueloss = ((networkvalues - rewards_to_go) **2).mean()
+            weightedvalueloss = valueloss * 0.5
+            weightedvalueloss.backward()
+            self.valuenet.optimizer.step()
+        
+        self.memory.clear(clear_trajectories = True)
+
+
+
 def draw_text(surface, text, color, position,size):
     if not pygame.font.get_init():
         pygame.font.init()
@@ -35,7 +246,6 @@ def transform(p):
     y = p[1]
 
     return (xdim/2 + x,ydim/2 + y)
-
 
 def length(v):
     return np.linalg.norm(v)
@@ -282,8 +492,23 @@ action:
 4 -> none
 """
         
-
+def reward(state):
+    normal = np.array([state[0],state[1],state[2]])
+    control = np.array([state[3],state[4],state[5]])
+    ball_position = np.array([state[6],state[7],state[8]])
+    ball_velocity = np.array([state[9],state[10],state[11]])
+    r = length(ball_position - origin)
+    temp = -1 * normalize(ball_velocity)
+    offset = normalize(ball_position - origin)
+    reward = 0
+    similarity = np.dot(temp,offset)
+    if similarity >= 0:
+        reward += np.dot(temp,offset)
+    if r < 99:
+        reward += 0.1
+    return reward
     
+
 def transition (state,action):
     normal = np.array([state[0],state[1],state[2]])
     control = np.array([state[3],state[4],state[5]])
@@ -307,11 +532,17 @@ def transition (state,action):
     if action == 3:
         axis = cross(normal,control)
         angle = -0.05
+    
     if angle != 0:
         newnormal = rotate(normal,axis,angle)
         newcontrol = rotate(control,axis,angle)
         newposition = rotate(ball_position,axis,angle)
-        nevelocity = rotate(ball_velocity,axis,angle)
+        newvelocity = rotate(ball_velocity,axis,angle)
+    if np.dot(newnormal,k) <= 0.7:
+        newnormal = normal
+        newcontrol = control
+        newposition = ball_position
+        newvelocity = ball_velocity
     projectedgravity = gravity - project(gravity,newnormal)
     newposition = newposition + newvelocity * dt 
     newvelocity = newvelocity + projectedgravity * dt
@@ -336,23 +567,8 @@ def transition (state,action):
     ]
     return np.array(out)
 
-
-
-
-
-
-     
-
-
-    
-
-
-
-
-
-        
-
-  
+def randrange (a,b):
+    return a + (b-a) * random()
 
 user = viewer(initial_position = (-20,0,100))
 world = environment()
@@ -403,20 +619,8 @@ for x in polygons:
 
 
 
-state_ = [
-    platform.normal[0],
-    platform.normal[1],
-    platform.normal[2],
-    platform.control[0],
-    platform.control[1],
-    platform.control[2],
-    ball.center[0],
-    ball.center[1],
-    ball.center[2],
-    0,
-    0,
-    0
-]
+state = np.array([0,0,1,1,0,0,0,0,0,randrange(-10,10),randrange(-10,10),randrange(-10,10),False])
+
 
 def printpath(path):
     points = []
@@ -434,79 +638,100 @@ def printpath(path):
             pygame.draw.line(screen, (255, 255, 255), start_transformed, end_transformed)
 
 
-points = []
-state = np.array(state_)
-while True:
-    normal = np.array([state[0],state[1],state[2]])
-    control = np.array([state[3],state[4],state[5]])
-    ball_position = np.array([state[6],state[7],state[8]])
-    ball_velocity = np.array([state[9],state[10],state[11]])
-    axis1 = normalize(cross(normal,control))
-    axis2 = normalize(control)
-    xtemp = np.dot(ball_position,axis1)
-    ytemp = np.dot(ball_position,axis2)
-    points.append(np.array([xtemp,ytemp]))
-    if len(points) > 100:
-        points.pop(0)
-    printstate(state)
-    printpath(points)
-    pygame.draw.line(screen,(255,128,0),transform(tuple(user.renderpoint(ball_position))),transform(tuple(user.renderpoint(ball_position + ball_velocity))))
 
-    for event in pygame.event.get():
-         if event.type == QUIT:
-            pygame.quit()
-            sys.exit()
-         elif event.type == pygame.MOUSEMOTION:
-            # Get relative mouse movement
-            dx, dy = event.rel
-            # Apply rotation with a smaller factor to reduce sensitivity
-            rotation_factor = 0.005 # Adjust this value to change rotation speed
-            user.rotate_horizontal(-dx * rotation_factor)
-            user.rotate_vertical(dy * rotation_factor)
+def testrun (policy):
+    state = np.array([0,0,1,1,0,0,0,0,0,randrange(-10,10),randrange(-10,10),randrange(-10,10),False])
+    points = []
+    totalrewards = 0
+    loop = True
+    while loop:
+        if state[len(state) - 1] :
+            loop = False
+        normal = np.array([state[0],state[1],state[2]])
+        control = np.array([state[3],state[4],state[5]])
+        ball_position = np.array([state[6],state[7],state[8]])
+        ball_velocity = np.array([state[9],state[10],state[11]])
+        axis1 = normalize(cross(normal,control))
+        axis2 = normalize(control)
+        xtemp = np.dot(ball_position,axis1)
+        ytemp = np.dot(ball_position,axis2)
+        points.append(np.array([xtemp,ytemp]))
+        if len(points) > 100:
+            points.pop(0)
+        printstate(state)
+        printpath(points)
+        pygame.draw.line(screen,(255,128,0),transform(tuple(user.renderpoint(ball_position))),transform(tuple(user.renderpoint(ball_position + ball_velocity))))
+        for event in pygame.event.get():
+            if event.type == QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.MOUSEMOTION:
+                dx, dy = event.rel
+                rotation_factor = 0.005 
+                user.rotate_horizontal(-dx * rotation_factor)
+                user.rotate_vertical(dy * rotation_factor)
 
-    keys = pygame.key.get_pressed()
-    
-    action = 5
-    if keys[K_w]:
-        user.step_forward(10)
-    if keys[K_a]:
-        user.step_sideways(-10)
-    if keys[K_s]:
-        user.step_forward(-10)
-    if keys[K_d]:
-        user.step_sideways(10)
-    if keys[K_j]:
-        action = 0
-    if keys[K_l]:
-        action = 1
-    if keys[K_i]:
-        action = 2
-    if keys[K_k]:
-        action = 3
-    if keys[K_COMMA]:
-        user.zoom_in()
-    if keys[K_PERIOD]:
-        user.zoom_out()
-    if keys[K_UP]:
-        user.rotate_vertical(-0.04)
-    if keys[K_DOWN]:
-        user.rotate_vertical(0.04)
-    if keys[K_LEFT]:
-        user.rotate_horizontal(0.04)
-    if keys[K_RIGHT]:
-        user.rotate_horizontal(-0.04)
-    if keys[K_SPACE]:
-        user.fly(10)
-    if keys[K_LSHIFT]:
-        user.fly(-10)
-    state = transition(state,action)
-    
-    draw_text(screen,"zoom : " + str(round(length(user.direction))), (255,0,0), (1350,50),23)
-    draw_text(screen, str((np.round(user.position,decimals = 1))),(255,0,0), (1350,100),23)
-
-    pygame.display.update()
-    
-    clock.tick(60)
+        action = policy.getaction(state)[0]
+        keys = pygame.key.get_pressed()
         
+        if keys[K_w]:
+            user.step_forward(10)
+        if keys[K_a]:
+            user.step_sideways(-10)
+        if keys[K_s]:
+            user.step_forward(-10)
+        if keys[K_d]:
+            user.step_sideways(10)
+        if keys[K_COMMA]:
+            user.zoom_in()
+        if keys[K_PERIOD]:
+            user.zoom_out()
+        if keys[K_UP]:
+            user.rotate_vertical(-0.04)
+        if keys[K_DOWN]:
+            user.rotate_vertical(0.04)
+        if keys[K_LEFT]:
+            user.rotate_horizontal(0.04)
+        if keys[K_RIGHT]:
+            user.rotate_horizontal(-0.04)
+        if keys[K_SPACE]:
+            user.fly(10)
+        if keys[K_LSHIFT]:
+            user.fly(-10)
+        state = transition(state,action)
+        totalrewards += reward(state)
+        
+        draw_text(screen,"zoom : " + str(round(length(user.direction))), (255,0,0), (1350,50),23)
+        draw_text(screen, str((np.round(user.position,decimals = 1))),(255,0,0), (1350,100),23)
+        draw_text(screen, "total rewards: " + str(totalrewards),(255,0,0), (1350,150),23)
+        
+        pygame.display.update()
+        
+        clock.tick(60)
+            
  
 
+policy = agent()
+testrun(policy)
+
+
+n = 0    
+
+while True:
+    print("trial number : " + str(n))
+    if n % 50 == 0:
+        testrun(policy)
+    n += 1
+    done = False
+    for _ in range (7):
+        state = np.array([0,0,1,1,0,0,0,0,0,randrange(-10,10),randrange(-10,10),randrange(-10,10),False])
+        while not done:
+            action,prob,val = policy.getaction(state)
+            nextstate = transition(state,action)
+            reward_ = reward(nextstate)
+            if state[len(state) - 1]:
+                done = True
+            policy.storememory(state,action,prob,val,reward_,)
+            state = nextstate
+        policy.endtrajectory()
+    policy.train(10)
