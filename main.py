@@ -161,7 +161,7 @@ class agent:
         if totalrewards > self.record:
             self.record = totalrewards
             print("record rewards acheived")
-            #self.saveparameters("recordpolicy.pth","recordvalue.pth")
+            #self.saveparameters("recordpolicy2.pth","recordvalue2.pth")
         futurerewards = []
         advantages = []
         
@@ -675,11 +675,7 @@ def testrun (policy):
             if event.type == QUIT:
                 pygame.quit()
                 sys.exit()
-            elif event.type == pygame.MOUSEMOTION:
-                dx, dy = event.rel
-                rotation_factor = 0.005 
-                user.rotate_horizontal(-dx * rotation_factor)
-                user.rotate_vertical(dy * rotation_factor)
+       
 
         action = policy.getaction(state)[0]
         keys = pygame.key.get_pressed()
@@ -730,8 +726,7 @@ def testrun (policy):
  
 
 policy = agent()
-policy.loadparameters("recordpolicy.pth","recordvalue.pth")
-testrun(policy)
+policy.loadparameters("recordpolicy2.pth","recordvalue2.pth")
 
 
 
@@ -743,13 +738,17 @@ while True:
         testrun(policy)
     n += 1
     done = False
-    for _ in range (20):
+    count = 0
+    for _ in range (15):
+        count += 1
         state = np.array([0,0,1,1,0,0,0,0,0,2* randrange(-10,10),2 * randrange(-10,10),2 * randrange(-10,10),False])
         while not done:
             action,prob,val = policy.getaction(state)
             nextstate = transition(state,action)
             reward_ = reward(nextstate)
             if state[len(state) - 1]:
+                done = True
+            if count >= 10000:
                 done = True
             policy.storememory(state,action,prob,val,reward_,)
             state = nextstate
