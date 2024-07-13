@@ -161,7 +161,7 @@ class agent:
         if totalrewards > self.record:
             self.record = totalrewards
             print("record rewards acheived")
-            self.saveparameters("recordpolicy.pth","recordvalue.pth")
+            #self.saveparameters("recordpolicy.pth","recordvalue.pth")
         futurerewards = []
         advantages = []
         
@@ -514,7 +514,7 @@ def reward(state):
     reward += 0.1  
     
     if r >= 100:
-        reward -= 10
+        reward -= 1000
     
     return reward
     
@@ -683,7 +683,15 @@ def testrun (policy):
 
         action = policy.getaction(state)[0]
         keys = pygame.key.get_pressed()
-        
+        # action = 4
+        # if keys[K_i]:
+        #     action = 0
+        # if keys[K_k]:
+        #     action = 1
+        # if keys[K_j]:
+        #     action = 2
+        # if keys[K_l]:
+        #     action = 3
         if keys[K_w]:
             user.step_forward(10)
         if keys[K_a]:
@@ -722,7 +730,9 @@ def testrun (policy):
  
 
 policy = agent()
+policy.loadparameters("recordpolicy.pth","recordvalue.pth")
 testrun(policy)
+
 
 
 n = 0    
